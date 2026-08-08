@@ -11,7 +11,6 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Worker動作確認
     if (url.pathname === "/api/health") {
       return json({
         ok: true,
@@ -20,11 +19,15 @@ export default {
       });
     }
 
-    // D1からゲーム一覧を取得
     if (url.pathname === "/api/games") {
       try {
         const { results } = await env.DB
-          .prepare("SELECT * FROM games ORDER BY popularity DESC LIMIT 50")
+          .prepare(`
+            SELECT *
+            FROM games
+            ORDER BY popularity DESC, name ASC
+            LIMIT 100
+          `)
           .all();
 
         return json({
@@ -33,17 +36,48 @@ export default {
           games: results
         });
       } catch (error) {
-        return json(
-          {
-            ok: false,
-            error: error.message
-          },
-          500
-        );
+        return json({ ok: false, error: error.message }, 500);
       }
     }
 
-    // 通常ページ
+    if (url.pathname === "/api/search") {
+      try {
+        const q = (url.searchParams.get("q") || "").trim();
+
+        if (!q) {
+          return json({
+            ok: true,
+            count: 0,
+            games: []
+          });
+        }
+
+        const like = `%${q}%`;
+
+        const { results } = await env.DB
+          .prepare(`
+            SELECT *
+            FROM games
+            WHERE name LIKE ?
+               OR name_kana LIKE ?
+               OR source LIKE ?
+            ORDER BY popularity DESC, name ASC
+            LIMIT 10
+          `)
+          .bind(like, like, like)
+          .all();
+
+        return json({
+          ok: true,
+          query: q,
+          count: results.length,
+          games: results
+        });
+      } catch (error) {
+        return json({ ok: false, error: error.message }, 500);
+      }
+    }
+
     return env.ASSETS.fetch(request);
   }
 };
