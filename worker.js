@@ -37,17 +37,21 @@ class ImageMetaCollector {
 
     if (
       !this.ogImage &&
-      (property === "og:image" ||
-       property === "og:image:url" ||
-       property === "og:image:secure_url")
+      (
+        property === "og:image" ||
+        property === "og:image:url" ||
+        property === "og:image:secure_url"
+      )
     ) {
       this.ogImage = absoluteUrl(content, this.baseUrl);
     }
 
     if (
       !this.twitterImage &&
-      (property === "twitter:image" ||
-       property === "twitter:image:src")
+      (
+        property === "twitter:image" ||
+        property === "twitter:image:src"
+      )
     ) {
       this.twitterImage = absoluteUrl(content, this.baseUrl);
     }
@@ -86,7 +90,6 @@ async function findOfficialImage(pageUrl) {
     }
 
     const finalUrl = response.url || pageUrl;
-
     const collector = new ImageMetaCollector(finalUrl);
 
     const rewritten = new HTMLRewriter()
@@ -97,7 +100,6 @@ async function findOfficialImage(pageUrl) {
       .on('meta[name="twitter:image:src"]', collector)
       .transform(response);
 
-    // HTMLRewriterを最後まで実行させる
     await rewritten.text();
 
     const imageUrl = collector.getImage();
@@ -152,11 +154,13 @@ async function collectImageCandidates(env) {
 
     if (!result.ok) {
       failed++;
+
       console.log(
         "Image candidate not found:",
         game.name,
         result.error
       );
+
       continue;
     }
 
@@ -187,4 +191,121 @@ async function collectImageCandidates(env) {
   }
 
   return {
-    checked: results
+    checked: results.length,
+    found,
+    failed
+  };
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // Worker動作確認
+    if (url.pathname === "/api/health") {
+      return json({
+        ok: true,
+        service: "haishin-ok",
+        message: "Worker is running"
+      });
+    }
+
+    // ゲーム一覧
+    if (url.pathname === "/api/games") {
+      try {
+        const { results } = await env.DB
+          .prepare(`
+            SELECT *
+            FROM games
+            ORDER BY popularity DESC, name ASC
+            LIMIT 100
+          `)
+          .all();
+
+        return json({
+          ok: true,
+          count: results.length,
+          games: results
+        });
+
+      } catch (error) {
+        return json(
+          {
+            ok: false,
+            error: error.message
+          },
+          500
+        );
+      }
+    }
+
+    // ゲーム検索
+    if (url.pathname === "/api/search") {
+      try {
+        const q =
+          (url.searchParams.get("q") || "").trim();
+
+        if (!q) {
+          return json({
+            ok: true,
+            count: 0,
+            games: []
+          });
+        }
+
+        const like = `%${q}%`;
+
+        const { results } = await env.DB
+          .prepare(`
+            SELECT *
+            FROM games
+            WHERE name LIKE ?
+               OR name_kana LIKE ?
+               OR source LIKE ?
+            ORDER BY popularity DESC, name ASC
+            LIMIT 10
+          `)
+          .bind(like, like, like)
+          .all();
+
+        return json({
+          ok: true,
+          query: q,
+          count: results.length,
+          games: results
+        });
+
+      } catch (error) {
+        return json(
+          {
+            ok: false,
+            error: error.message
+          },
+          500
+        );
+      }
+    }
+
+    // 通常サイト
+    return env.ASSETS.fetch(request);
+  },
+
+  // 毎日のCronから実行
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(
+      collectImageCandidates(env)
+        .then(result => {
+          console.log(
+            "Image collection completed:",
+            JSON.stringify(result)
+          );
+        })
+        .catch(error => {
+          console.error(
+            "Image collection failed:",
+            error
+          );
+        })
+    );
+  }
+};
