@@ -17,5 +17,11 @@
       "database_name": "haishin-ok-db",
       "database_id": "4c3d6f7f-6ed6-4d16-8f52-f61a7cef3df8"
     }
-  ]
+  ],
+
+  "triggers": {
+    "crons": [
+      "0 18 * * *"
+    ]
+  }
 }
